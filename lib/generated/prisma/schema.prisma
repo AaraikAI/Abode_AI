@@ -1,0 +1,87 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Pipeline {
+  id          String         @id @default(cuid())
+  orgId       String
+  name        String
+  description String?
+  owner       String
+  status      PipelineStatus @default(PENDING)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  tasks       PipelineTask[]
+
+  @@index([orgId])
+}
+
+model PipelineTask {
+  id          String     @id @default(cuid())
+  pipeline    Pipeline   @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  pipelineId  String
+  name        String
+  owner       String
+  status      TaskStatus @default(PENDING)
+  startedAt   DateTime?
+  completedAt DateTime?
+  stepOrder   Int        @default(0)
+
+  @@index([pipelineId])
+}
+
+model AuditEvent {
+  id        String   @id @default(cuid())
+  timestamp DateTime @default(now())
+  actor     String
+  orgId     String
+  action    String
+  target    String?
+  metadata  Json?
+
+  @@index([orgId, timestamp])
+}
+
+model Agent {
+  id          String      @id @default(cuid())
+  name        String
+  description String
+  version     String
+  tags        String      @default("")
+  status      AgentStatus @default(ACTIVE)
+  author      String
+  rating      Float?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+}
+
+enum PipelineStatus {
+  PENDING
+  RUNNING
+  AWAITING_APPROVAL
+  APPROVED
+  FAILED
+}
+
+enum TaskStatus {
+  PENDING
+  RUNNING
+  AWAITING_APPROVAL
+  APPROVED
+  FAILED
+}
+
+enum AgentStatus {
+  ACTIVE
+  DRAFT
+  DEPRECATED
+}

@@ -1,0 +1,5 @@
+lib/generated/**
+node_modules/**
+build/**
+.next/**
+
