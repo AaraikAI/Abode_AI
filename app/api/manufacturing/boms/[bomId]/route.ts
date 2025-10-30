@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { requireSession } from "@/lib/auth/session"
-import { getBom, listManufacturingSyncs, recordManufacturingSync } from "@/lib/data/manufacturing"
+import { getBom, listManufacturingSyncs } from "@/lib/data/manufacturing"
+import { syncBomWithErp, type ErpProvider } from "@/lib/services/erp"
 
 export async function GET(request: NextRequest, { params }: { params: { bomId: string } }) {
   const session = await requireSession({ request, enforceDevice: true, enforceGeo: true })
@@ -25,17 +26,24 @@ export async function POST(request: NextRequest, { params }: { params: { bomId: 
   const body = (await request.json().catch(() => ({}))) as {
     action?: string
     message?: string
+    provider?: ErpProvider
   }
 
   const action = body.action ?? "erp_sync"
-  const message = body.message ?? "Mock ERP sync enqueued."
+  const provider = body.provider ?? "jega"
 
-  const syncEvent = await recordManufacturingSync({
-    bomId: params.bomId,
-    status: "queued",
-    message,
-    payload: { action, triggeredBy: session.user?.email ?? "unknown" },
-  })
-
-  return NextResponse.json({ sync: syncEvent }, { status: 202 })
+  switch (action) {
+    case "erp_sync":
+    case "retry": {
+      const result = await syncBomWithErp({
+        bom,
+        provider,
+        actor: session.user?.email ?? session.user?.name ?? "unknown",
+      })
+      const syncs = await listManufacturingSyncs(params.bomId)
+      return NextResponse.json({ timeline: result.timeline, syncs })
+    }
+    default:
+      return NextResponse.json({ error: `Unsupported action: ${action}` }, { status: 400 })
+  }
 }

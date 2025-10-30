@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto"
 
 import { supabase } from "@/lib/db/supabase"
+import { listSustainabilityLogs } from "@/lib/data/sustainability"
 import type { StudioObject } from "@/types/studio"
 
 export interface BomItem {
@@ -35,6 +36,23 @@ export interface ManufacturingSyncEvent {
   payload?: Record<string, unknown> | null
 }
 
+export interface BomItemEmission {
+  itemId: string
+  name: string
+  co2Kg: number
+  energyKwh: number
+  share: number
+}
+
+export interface BomSustainabilitySummary {
+  bomId: string
+  totalCo2Kg: number
+  totalEnergyKwh: number
+  methodology: string
+  lastUpdated: string
+  items: BomItemEmission[]
+}
+
 const BOM_TABLE = "manufacturing_boms"
 const BOM_ITEMS_TABLE = "manufacturing_bom_items"
 const SYNC_TABLE = "manufacturing_sync_events"
@@ -64,6 +82,21 @@ export async function listBoms(orgId: string, limit = 20): Promise<Manufacturing
     metadata: bom.metadata ?? undefined,
     items: items[bom.id] ?? [],
   }))
+}
+
+export async function updateBomStatus(params: {
+  bomId: string
+  status: string
+  metadata?: Record<string, unknown>
+}): Promise<void> {
+  const updates: Record<string, unknown> = { status: params.status }
+  if (params.metadata) {
+    updates.metadata = params.metadata
+  }
+  const { error } = await supabase.from(BOM_TABLE).update(updates).eq("id", params.bomId)
+  if (error) {
+    throw new Error(`Failed to update BOM status: ${error.message}`)
+  }
 }
 
 export async function getBom(orgId: string, bomId: string): Promise<ManufacturingBom | null> {
@@ -284,4 +317,60 @@ function deriveBomItems(objects: StudioObject[]): Array<{
       },
     }
   })
+}
+
+export async function calculateBomSustainability(orgId: string, bom: ManufacturingBom): Promise<BomSustainabilitySummary> {
+  const logs = await listSustainabilityLogs(orgId, 200)
+  if (!logs.length || !bom.items.length) {
+    return {
+      bomId: bom.id,
+      totalCo2Kg: 0,
+      totalEnergyKwh: 0,
+      methodology: "No sustainability telemetry available",
+      lastUpdated: new Date().toISOString(),
+      items: bom.items.map((item) => ({
+        itemId: item.id,
+        name: item.name,
+        co2Kg: 0,
+        energyKwh: 0,
+        share: 0,
+      })),
+    }
+  }
+
+  const totalCo2 = logs.reduce((sum, log) => sum + (log.co2Kg ?? 0), 0)
+  const totalEnergy = logs.reduce((sum, log) => sum + (log.energyKwh ?? 0), 0)
+
+  const weightedCosts = bom.items.map((item) => {
+    const quantity = item.quantity ?? 0
+    const cost = (item.cost ?? 0) * quantity
+    return {
+      item,
+      weight: cost > 0 ? cost : Math.max(quantity, 1),
+    }
+  })
+
+  const totalWeight = weightedCosts.reduce((sum, entry) => sum + entry.weight, 0) || 1
+
+  const items = weightedCosts.map((entry) => {
+    const share = entry.weight / totalWeight
+    const co2Kg = Number((totalCo2 * share).toFixed(4))
+    const energy = Number((totalEnergy * share).toFixed(4))
+    return {
+      itemId: entry.item.id,
+      name: entry.item.name,
+      co2Kg,
+      energyKwh: energy,
+      share: Number((share * 100).toFixed(2)),
+    }
+  })
+
+  return {
+    bomId: bom.id,
+    totalCo2Kg: Number(totalCo2.toFixed(4)),
+    totalEnergyKwh: Number(totalEnergy.toFixed(4)),
+    methodology: "Apportioned using item cost/quantity share across latest CodeCarbon logs",
+    lastUpdated: new Date().toISOString(),
+    items,
+  }
 }
