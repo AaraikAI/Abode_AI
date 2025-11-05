@@ -27,6 +27,45 @@ export async function forwardToSiem(payload: SplunkPayload) {
   }
 }
 
+export async function forwardPrivacyEvent(payload: {
+  orgId: string
+  requestId: string
+  action: "forget" | "export"
+  metadata?: Record<string, unknown>
+}) {
+  const endpoint = env.ONETRUST_API_URL
+  const token = env.ONETRUST_API_TOKEN
+
+  if (!endpoint || !token) {
+    if (env.NODE_ENV !== "test") {
+      console.info("[OneTrust] Skipping privacy event forwarding", payload)
+    }
+    return
+  }
+
+  try {
+    const response = await fetch(`${endpoint.replace(/\/$/, "")}/privacy-requests`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        orgId: payload.orgId,
+        requestId: payload.requestId,
+        action: payload.action,
+        metadata: payload.metadata ?? {},
+      }),
+    })
+
+    if (!response.ok) {
+      console.warn("[OneTrust] Privacy event failed", await response.text())
+    }
+  } catch (error) {
+    console.warn("[OneTrust] Privacy event exception", error)
+  }
+}
+
 async function postWithRetry(endpoint: string, token: string, payload: SplunkPayload, attempt = 1): Promise<Response> {
   const response = await fetch(endpoint, {
     method: "POST",

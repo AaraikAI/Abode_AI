@@ -3,6 +3,8 @@ import { randomUUID } from "crypto"
 import type { NextAuthOptions } from "next-auth"
 import Auth0Provider from "next-auth/providers/auth0"
 import CredentialsProvider from "next-auth/providers/credentials"
+import EmailProvider from "next-auth/providers/email"
+import BoxyHQSAMLProvider from "next-auth/providers/boxyhq-saml"
 
 import OIDCProvider from "@/lib/auth/providers/oidc"
 
@@ -29,6 +31,14 @@ const auth0ClientSecret = process.env.AUTH0_CLIENT_SECRET
 const oidcIssuer = process.env.OIDC_ISSUER
 const oidcClientId = process.env.OIDC_CLIENT_ID
 const oidcClientSecret = process.env.OIDC_CLIENT_SECRET
+
+const samlEntryPoint = process.env.SAML_ENTRYPOINT
+const samlEntityId = process.env.SAML_ENTITY_ID
+const samlCert = process.env.SAML_CERT
+const samlAudience = process.env.SAML_AUDIENCE
+
+const emailServer = process.env.EMAIL_SERVER
+const emailFrom = process.env.EMAIL_FROM
 
 const devAuthEnabled = process.env.DEV_AUTH_ENABLED === "true"
 const devUserRoles = process.env.DEV_AUTH_ROLES?.split(",").map((role) => role.trim()).filter(Boolean)
@@ -107,6 +117,17 @@ export const authOptions: NextAuthOptions = {
           }),
         ]
       : []),
+    ...(samlEntryPoint && samlEntityId && samlCert
+      ? [
+          BoxyHQSAMLProvider({
+            id: "enterprise-saml",
+            name: "Enterprise SAML",
+            issuer: samlEntryPoint,
+            clientId: samlEntityId,
+            clientSecret: samlCert,
+          }),
+        ]
+      : []),
     ...(devAuthEnabled
       ? [
           CredentialsProvider({
@@ -128,6 +149,15 @@ export const authOptions: NextAuthOptions = {
                 orgId: devUserOrgId,
               }
             },
+          }),
+        ]
+      : []),
+    ...(emailServer && emailFrom
+      ? [
+          EmailProvider({
+            server: emailServer,
+            from: emailFrom,
+            maxAge: 60 * 60,
           }),
         ]
       : []),

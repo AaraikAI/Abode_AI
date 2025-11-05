@@ -1,20 +1,32 @@
-import { requireSession } from "@/lib/auth/session"
-import { listUserDevices } from "@/lib/auth/store"
-import { SecurityPanel } from "@/components/settings/security-panel"
+import { DeviceManager } from "@/components/security/device-manager"
+import { SecurityKeysManager } from "@/components/security/security-keys"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
-export default async function SecuritySettingsPage() {
-  const session = await requireSession({ enforceDevice: true, enforceGeo: true })
-  const devices = await listUserDevices(session.user?.id as string)
-
+export default function SecuritySettingsPage() {
   return (
-    <main className="min-h-screen bg-background">
-      <div className="mx-auto flex max-w-4xl flex-col gap-6 px-6 py-10">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-3xl font-semibold text-foreground">Security</h1>
-          <p className="text-sm text-muted-foreground">Manage trusted devices and WebAuthn security keys.</p>
-        </div>
-        <SecurityPanel initialData={{ devices }} />
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold text-foreground">Security</h1>
+        <p className="text-sm text-muted-foreground">Manage sessions, hardware keys, and data privacy workflows.</p>
       </div>
-    </main>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <DeviceManager />
+        <SecurityKeysManager />
+      </div>
+
+      <Card className="border border-border/60 bg-card/80">
+        <CardHeader>
+          <CardTitle className="text-base">Data retention & erasure</CardTitle>
+          <CardDescription>Submit or complete data erasure workflows for regulatory compliance.</CardDescription>
+        </CardHeader>
+        <CardContent className="text-sm text-muted-foreground">
+          <p>
+            Use the compliance console to approve forget requests. Once approved, invoke the erasure endpoint or open a ticket with
+            the privacy team for irreversible deletion across cold storage.
+          </p>
+        </CardContent>
+      </Card>
+    </div>
   )
 }
