@@ -1,0 +1,272 @@
+# Abode AI - Kubernetes Deployment Manifests
+# Complete production deployment for Phase 1
+
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: abode-ai-prod
+  labels:
+    name: abode-ai-prod
+    environment: production
+
+---
+# Frontend Deployment (Next.js)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: abode-ai-frontend
+  namespace: abode-ai-prod
+  labels:
+    app: abode-ai
+    component: frontend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: abode-ai
+      component: frontend
+  template:
+    metadata:
+      labels:
+        app: abode-ai
+        component: frontend
+    spec:
+      containers:
+      - name: frontend
+        image: abodeai/frontend:latest
+        ports:
+        - containerPort: 3000
+          name: http
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: NEXT_PUBLIC_API_URL
+          valueFrom:
+            configMapKeyRef:
+              name: abode-ai-config
+              key: api_url
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: abode-ai-secrets
+              key: database_url
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+# Frontend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: abode-ai-frontend
+  namespace: abode-ai-prod
+  labels:
+    app: abode-ai
+    component: frontend
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 3000
+    protocol: TCP
+    name: http
+  selector:
+    app: abode-ai
+    component: frontend
+
+---
+# Render Queue Worker Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: abode-ai-render-worker
+  namespace: abode-ai-prod
+  labels:
+    app: abode-ai
+    component: render-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: abode-ai
+      component: render-worker
+  template:
+    metadata:
+      labels:
+        app: abode-ai
+        component: render-worker
+    spec:
+      nodeSelector:
+        role: gpu
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+      containers:
+      - name: render-worker
+        image: abodeai/render-worker:latest
+        env:
+        - name: WORKER_TYPE
+          value: "render"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: abode-ai-secrets
+              key: database_url
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: abode-ai-config
+              key: redis_url
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+            nvidia.com/gpu: 1
+          limits:
+            memory: "16Gi"
+            cpu: "8000m"
+            nvidia.com/gpu: 1
+
+---
+# Redis (for job queue)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: abode-ai-prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+
+---
+# Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: abode-ai-prod
+spec:
+  ports:
+  - port: 6379
+    targetPort: 6379
+  selector:
+    app: redis
+
+---
+# ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: abode-ai-config
+  namespace: abode-ai-prod
+data:
+  api_url: "https://api.abode-ai.com"
+  redis_url: "redis://redis:6379"
+
+---
+# Horizontal Pod Autoscaler (Frontend)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: abode-ai-frontend-hpa
+  namespace: abode-ai-prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: abode-ai-frontend
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+---
+# Ingress (NGINX)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: abode-ai-ingress
+  namespace: abode-ai-prod
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  tls:
+  - hosts:
+    - abode-ai.com
+    - www.abode-ai.com
+    secretName: abode-ai-tls
+  rules:
+  - host: abode-ai.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: abode-ai-frontend
+            port:
+              number: 80
+  - host: www.abode-ai.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: abode-ai-frontend
+            port:
+              number: 80
