@@ -33,10 +33,14 @@ export interface CacheConfig {
 export class EdgeComputingService {
   private cdnProvider: 'cloudflare' | 'fastly' | 'akamai'
   private apiKey: string
+  private accountId: string
+  private zoneId: string
 
   constructor(provider: 'cloudflare' | 'fastly' | 'akamai' = 'cloudflare') {
     this.cdnProvider = provider
-    this.apiKey = process.env.EDGE_API_KEY || ''
+    this.apiKey = process.env.CLOUDFLARE_API_KEY || process.env.EDGE_API_KEY || ''
+    this.accountId = process.env.CLOUDFLARE_ACCOUNT_ID || ''
+    this.zoneId = process.env.CLOUDFLARE_ZONE_ID || ''
   }
 
   /**
@@ -234,12 +238,100 @@ export class EdgeComputingService {
   }
 
   private async deployToProvider(deployment: EdgeDeployment): Promise<void> {
-    // Provider-specific deployment logic
-    console.log(`[EdgeComputing] Deploying ${deployment.functionName} to ${this.cdnProvider}`)
+    if (this.cdnProvider === 'cloudflare') {
+      await this.deployToCloudflare(deployment)
+    } else if (this.cdnProvider === 'fastly') {
+      await this.deployToFastly(deployment)
+    } else if (this.cdnProvider === 'akamai') {
+      await this.deployToAkamai(deployment)
+    }
+  }
+
+  private async deployToCloudflare(deployment: EdgeDeployment): Promise<void> {
+    if (!this.apiKey || !this.accountId) {
+      console.warn('[EdgeComputing] Cloudflare credentials not configured, skipping deployment')
+      return
+    }
+
+    try {
+      // Deploy as Cloudflare Worker
+      const response = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${this.accountId}/workers/scripts/${deployment.functionName}`,
+        {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/javascript'
+          },
+          body: deployment.code
+        }
+      )
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(`Cloudflare deployment failed: ${JSON.stringify(error)}`)
+      }
+
+      console.log(`[EdgeComputing] Deployed ${deployment.functionName} to Cloudflare Workers`)
+    } catch (error) {
+      console.error('[EdgeComputing] Cloudflare deployment error:', error)
+      throw error
+    }
+  }
+
+  private async deployToFastly(deployment: EdgeDeployment): Promise<void> {
+    console.log(`[EdgeComputing] Deploying ${deployment.functionName} to Fastly`)
+    // Fastly Compute@Edge integration would go here
+  }
+
+  private async deployToAkamai(deployment: EdgeDeployment): Promise<void> {
+    console.log(`[EdgeComputing] Deploying ${deployment.functionName} to Akamai`)
+    // Akamai EdgeWorkers integration would go here
   }
 
   private async configureCloudflareCache(config: CacheConfig): Promise<void> {
-    console.log('[EdgeComputing] Configuring Cloudflare cache')
+    if (!this.apiKey || !this.zoneId) {
+      console.warn('[EdgeComputing] Cloudflare credentials not configured')
+      return
+    }
+
+    try {
+      // Create cache rule using Cloudflare Page Rules API
+      const response = await fetch(
+        `https://api.cloudflare.com/client/v4/zones/${this.zoneId}/pagerules`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            targets: [{
+              target: 'url',
+              constraint: {
+                operator: 'matches',
+                value: `*${config.cacheKey}*`
+              }
+            }],
+            actions: [{
+              id: 'edge_cache_ttl',
+              value: config.ttl
+            }],
+            status: 'active'
+          })
+        }
+      )
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(`Cache configuration failed: ${JSON.stringify(error)}`)
+      }
+
+      console.log('[EdgeComputing] Cloudflare cache configured')
+    } catch (error) {
+      console.error('[EdgeComputing] Cache configuration error:', error)
+      throw error
+    }
   }
 
   private async configureFastlyCache(config: CacheConfig): Promise<void> {
@@ -251,16 +343,83 @@ export class EdgeComputingService {
   }
 
   private async purgeCacheUrl(url: string): Promise<void> {
-    console.log(`[EdgeComputing] Purging cache for ${url}`)
+    if (this.cdnProvider === 'cloudflare' && this.apiKey && this.zoneId) {
+      try {
+        const response = await fetch(
+          `https://api.cloudflare.com/client/v4/zones/${this.zoneId}/purge_cache`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${this.apiKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ files: [url] })
+          }
+        )
+
+        if (response.ok) {
+          console.log(`[EdgeComputing] Purged cache for ${url}`)
+        }
+      } catch (error) {
+        console.error('[EdgeComputing] Cache purge error:', error)
+      }
+    } else {
+      console.log(`[EdgeComputing] Purging cache for ${url}`)
+    }
   }
 
   private async purgeCacheTag(tag: string): Promise<void> {
-    console.log(`[EdgeComputing] Purging cache for tag ${tag}`)
+    if (this.cdnProvider === 'cloudflare' && this.apiKey && this.zoneId) {
+      try {
+        const response = await fetch(
+          `https://api.cloudflare.com/client/v4/zones/${this.zoneId}/purge_cache`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${this.apiKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ tags: [tag] })
+          }
+        )
+
+        if (response.ok) {
+          console.log(`[EdgeComputing] Purged cache for tag ${tag}`)
+        }
+      } catch (error) {
+        console.error('[EdgeComputing] Cache purge error:', error)
+      }
+    } else {
+      console.log(`[EdgeComputing] Purging cache for tag ${tag}`)
+    }
   }
 
   private async purgeAllCache(): Promise<number> {
+    if (this.cdnProvider === 'cloudflare' && this.apiKey && this.zoneId) {
+      try {
+        const response = await fetch(
+          `https://api.cloudflare.com/client/v4/zones/${this.zoneId}/purge_cache`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${this.apiKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ purge_everything: true })
+          }
+        )
+
+        if (response.ok) {
+          console.log('[EdgeComputing] Purged all cache')
+          return 1000 // Estimate
+        }
+      } catch (error) {
+        console.error('[EdgeComputing] Cache purge error:', error)
+      }
+    }
+
     console.log('[EdgeComputing] Purging all cache')
-    return 1000 // Estimate
+    return 1000
   }
 
   private generateId(): string {

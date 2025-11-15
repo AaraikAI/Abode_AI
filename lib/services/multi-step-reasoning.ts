@@ -43,8 +43,16 @@ export class MultiStepReasoningService {
     workingMemory: {}
   }
   private maxSteps: number = 10
+  private llmEndpoint: string
+  private llmApiKey: string
+  private llmModel: string
+  private useLLM: boolean
 
   constructor() {
+    this.llmApiKey = process.env.OPENAI_API_KEY || ''
+    this.llmModel = process.env.OPENAI_MODEL || 'gpt-4'
+    this.llmEndpoint = 'https://api.openai.com/v1/chat/completions'
+    this.useLLM = !!this.llmApiKey
     this.registerDefaultTools()
   }
 
@@ -155,18 +163,57 @@ export class MultiStepReasoningService {
    * Generate thought based on current context
    */
   private async generateThought(query: string, previousSteps: ReasoningStep[]): Promise<string> {
-    // In production: Call LLM with ReAct prompt
-    // For now: Rule-based simulation
-    if (previousSteps.length === 0) {
-      return `I need to understand: ${query}. Let me break this down.`
+    if (!this.useLLM) {
+      // Fallback: Rule-based simulation
+      if (previousSteps.length === 0) {
+        return `I need to understand: ${query}. Let me break this down.`
+      }
+
+      const lastObs = previousSteps.filter(s => s.type === 'observation').pop()
+      if (lastObs) {
+        return `Based on the previous result, I should analyze ${lastObs.toolOutput}`
+      }
+
+      return 'I need more information to answer this question.'
     }
 
-    const lastObs = previousSteps.filter(s => s.type === 'observation').pop()
-    if (lastObs) {
-      return `Based on the previous result, I should analyze ${lastObs.toolOutput}`
-    }
+    // Production: Call LLM with ReAct prompt
+    const context = this.buildContextPrompt(query, previousSteps)
+    const prompt = `You are an AI assistant using the ReAct (Reasoning and Acting) pattern.
 
-    return 'I need more information to answer this question.'
+${context}
+
+Analyze the current situation and generate your next thought. Be concise and focused.
+Available tools: ${Array.from(this.tools.keys()).join(', ')}
+
+Thought:`
+
+    try {
+      const response = await fetch(this.llmEndpoint, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.llmApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: this.llmModel,
+          messages: [{role: 'user', content: prompt}],
+          max_tokens: 150,
+          temperature: 0.7
+        })
+      })
+
+      if (!response.ok) {
+        console.error('[MultiStepReasoning] LLM call failed:', response.statusText)
+        return 'I need more information to answer this question.'
+      }
+
+      const data = await response.json()
+      return data.choices[0]?.message?.content?.trim() || 'Unable to generate thought.'
+    } catch (error) {
+      console.error('[MultiStepReasoning] Error generating thought:', error)
+      return 'I need more information to answer this question.'
+    }
   }
 
   /**
@@ -176,41 +223,138 @@ export class MultiStepReasoningService {
     toolName: string
     input: any
   } | null> {
-    // In production: LLM selects tool based on thought
-    // For now: Simple heuristics
-    if (thought.includes('search')) {
-      return {toolName: 'search', input: {query: 'relevant information'}}
+    if (!this.useLLM) {
+      // Fallback: Simple heuristics
+      if (thought.includes('search')) {
+        return {toolName: 'search', input: {query: 'relevant information'}}
+      }
+
+      if (thought.includes('calculate')) {
+        return {toolName: 'calculator', input: {expression: '1 + 1'}}
+      }
+
+      if (thought.includes('model')) {
+        return {toolName: 'modelSearch', input: {query: 'furniture'}}
+      }
+
+      return null
     }
 
-    if (thought.includes('calculate')) {
-      return {toolName: 'calculator', input: {expression: '1 + 1'}}
-    }
+    // Production: LLM selects tool based on thought
+    const toolDescriptions = Array.from(this.tools.values()).map(t =>
+      `${t.name}: ${t.description} (params: ${Object.keys(t.parameters).join(', ')})`
+    ).join('\n')
 
-    if (thought.includes('model')) {
-      return {toolName: 'modelSearch', input: {query: 'furniture'}}
-    }
+    const prompt = `Based on this thought: "${thought}"
 
-    return null
+Available tools:
+${toolDescriptions}
+
+Select the most appropriate tool to use, or respond with "NONE" if no tool is needed.
+Respond in JSON format: {"tool": "toolName", "input": {...}} or {"tool": "NONE"}`
+
+    try {
+      const response = await fetch(this.llmEndpoint, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.llmApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: this.llmModel,
+          messages: [{role: 'user', content: prompt}],
+          max_tokens: 100,
+          temperature: 0.3
+        })
+      })
+
+      if (!response.ok) {
+        return null
+      }
+
+      const data = await response.json()
+      const content = data.choices[0]?.message?.content?.trim() || ''
+
+      // Parse JSON response
+      const match = content.match(/\{[\s\S]*\}/)
+      if (match) {
+        const parsed = JSON.parse(match[0])
+        if (parsed.tool && parsed.tool !== 'NONE') {
+          return {toolName: parsed.tool, input: parsed.input || {}}
+        }
+      }
+
+      return null
+    } catch (error) {
+      console.error('[MultiStepReasoning] Error selecting action:', error)
+      return null
+    }
   }
 
   /**
    * Check if we can answer the query
    */
   private canAnswerQuery(thought: string, steps: ReasoningStep[]): boolean {
-    // In production: LLM determines if sufficient information gathered
-    return steps.length >= 4 || thought.includes('sufficient') || thought.includes('complete')
+    if (!this.useLLM) {
+      // Fallback: Simple heuristics
+      return steps.length >= 4 || thought.includes('sufficient') || thought.includes('complete')
+    }
+
+    // Production: LLM determines if sufficient information gathered
+    return thought.toLowerCase().includes('answer') ||
+           thought.toLowerCase().includes('sufficient') ||
+           thought.toLowerCase().includes('complete') ||
+           thought.toLowerCase().includes('ready to respond') ||
+           steps.length >= 8
   }
 
   /**
    * Generate final answer
    */
   private async generateAnswer(query: string, steps: ReasoningStep[]): Promise<string> {
-    // In production: LLM synthesizes answer from reasoning steps
-    const observations = steps.filter(s => s.type === 'observation')
-    if (observations.length > 0) {
-      return `Based on my analysis: ${JSON.stringify(observations[observations.length - 1].toolOutput)}`
+    if (!this.useLLM) {
+      // Fallback: Rule-based answer
+      const observations = steps.filter(s => s.type === 'observation')
+      if (observations.length > 0) {
+        return `Based on my analysis: ${JSON.stringify(observations[observations.length - 1].toolOutput)}`
+      }
+      return 'Unable to provide a definitive answer with available information.'
     }
-    return 'Unable to provide a definitive answer with available information.'
+
+    // Production: LLM synthesizes answer from reasoning steps
+    const context = this.buildContextPrompt(query, steps)
+    const prompt = `Original question: ${query}
+
+${context}
+
+Based on the reasoning steps above, provide a clear, concise answer to the original question:`
+
+    try {
+      const response = await fetch(this.llmEndpoint, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.llmApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: this.llmModel,
+          messages: [{role: 'user', content: prompt}],
+          max_tokens: 300,
+          temperature: 0.5
+        })
+      })
+
+      if (!response.ok) {
+        console.error('[MultiStepReasoning] LLM answer generation failed')
+        return 'Unable to provide a definitive answer with available information.'
+      }
+
+      const data = await response.json()
+      return data.choices[0]?.message?.content?.trim() || 'Unable to generate answer.'
+    } catch (error) {
+      console.error('[MultiStepReasoning] Error generating answer:', error)
+      return 'Unable to provide a definitive answer with available information.'
+    }
   }
 
   /**
@@ -230,6 +374,29 @@ export class MultiStepReasoningService {
    */
   private async executeProblemSolving(problem: string, steps: string[]): Promise<string> {
     return `Solution for: ${problem} (derived through ${steps.length} reasoning steps)`
+  }
+
+  /**
+   * Build context prompt from reasoning steps
+   */
+  private buildContextPrompt(query: string, steps: ReasoningStep[]): string {
+    let context = `Query: ${query}\n\nReasoning chain:\n`
+
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i]
+      if (step.type === 'thought') {
+        context += `\nThought ${i + 1}: ${step.content}`
+      } else if (step.type === 'action') {
+        context += `\nAction ${i + 1}: ${step.content}`
+        if (step.toolInput) {
+          context += ` with input: ${JSON.stringify(step.toolInput)}`
+        }
+      } else if (step.type === 'observation') {
+        context += `\nObservation ${i + 1}: ${step.content}`
+      }
+    }
+
+    return context
   }
 
   /**

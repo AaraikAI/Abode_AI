@@ -642,5 +642,17 @@ export class RAGService {
   }
 }
 
-// Export singleton instance
-export const rag = new RAGService()
+// Export singleton instance with production configuration
+export const rag = new RAGService(
+  {
+    model: 'openai',
+    apiKey: process.env.OPENAI_API_KEY || '',
+    dimensions: 1536,
+    batchSize: 100
+  },
+  {
+    chunkSize: 1000,
+    chunkOverlap: 200,
+    preserveSentences: true
+  }
+)

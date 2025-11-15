@@ -284,8 +284,43 @@ export class PredictiveRiskModelsService {
   // Helper methods
 
   private async getSeismicZone(lat: number, lon: number): Promise<{zone: number; pga: number}> {
-    // Query seismic hazard database
-    // For now, simple mock based on location
+    // Try to fetch from USGS Seismic Design Maps API
+    const usgsApiKey = process.env.USGS_API_KEY
+
+    if (usgsApiKey) {
+      try {
+        const response = await fetch(
+          `https://earthquake.usgs.gov/ws/designmaps/asce7-16.json?latitude=${lat}&longitude=${lon}&riskCategory=ii&siteClass=c&title=Abode`,
+          {
+            headers: {
+              'Authorization': `Bearer ${usgsApiKey}`
+            }
+          }
+        )
+
+        if (response.ok) {
+          const data = await response.json()
+
+          // Extract PGA and determine zone
+          const pga = data.response?.data?.pga || 0.15
+          const ss = data.response?.data?.ss || 0.5 // Short-period spectral acceleration
+
+          // Determine seismic zone based on ASCE 7-16 criteria
+          let zone = 1
+          if (ss >= 1.5) zone = 4
+          else if (ss >= 1.0) zone = 3
+          else if (ss >= 0.5) zone = 2
+
+          console.log(`[RiskModels] USGS seismic data: PGA=${pga}g, Ss=${ss}, Zone=${zone}`)
+
+          return { zone, pga }
+        }
+      } catch (error) {
+        console.error('[RiskModels] Failed to fetch USGS data:', error)
+      }
+    }
+
+    // Fallback: mock based on location
     const isHighRisk = Math.abs(lat) > 30 && Math.abs(lat) < 40
     return {
       zone: isHighRisk ? 4 : 2,
@@ -294,10 +329,66 @@ export class PredictiveRiskModelsService {
   }
 
   private async getFloodZone(lat: number, lon: number): Promise<{zone: string; annualProbability: number; factor: number}> {
-    // Query FEMA flood maps
+    // Try to fetch from FEMA Flood Map Service Center API
+    const femaApiKey = process.env.FEMA_API_KEY
+
+    if (femaApiKey) {
+      try {
+        const response = await fetch(
+          `https://hazards.fema.gov/gis/nfhl/rest/services/FIRMette/GPServer/FIRMette/execute`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${femaApiKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              Lat: lat,
+              Long: lon,
+              f: 'json'
+            })
+          }
+        )
+
+        if (response.ok) {
+          const data = await response.json()
+
+          // Extract flood zone designation
+          const zone = data.results?.[0]?.value?.floodZone || 'X'
+
+          // Map FEMA zones to risk factors
+          let annualProbability = 0.002 // Default 0.2%
+          let factor = 1.0
+
+          // High Risk Areas (1% annual chance)
+          if (['A', 'AE', 'AH', 'AO', 'V', 'VE'].includes(zone)) {
+            annualProbability = 0.01
+            factor = 1.5
+          }
+          // Moderate Risk Areas (0.2% annual chance)
+          else if (zone === 'X' && zone.includes('shaded')) {
+            annualProbability = 0.002
+            factor = 1.2
+          }
+          // Low Risk Areas
+          else {
+            annualProbability = 0.001
+            factor = 1.0
+          }
+
+          console.log(`[RiskModels] FEMA flood data: Zone=${zone}, Probability=${annualProbability}`)
+
+          return { zone, annualProbability, factor }
+        }
+      } catch (error) {
+        console.error('[RiskModels] Failed to fetch FEMA data:', error)
+      }
+    }
+
+    // Fallback: moderate risk
     return {
-      zone: 'X', // Moderate risk
-      annualProbability: 0.002, // 0.2% annual chance
+      zone: 'X',
+      annualProbability: 0.002,
       factor: 1.0
     }
   }
