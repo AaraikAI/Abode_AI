@@ -1,0 +1,451 @@
+# Istio Service Mesh Configuration for Abode AI
+# Enables distributed tracing, metrics, and SLO/SLA monitoring
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: istio-system
+  labels:
+    istio-injection: enabled
+
+---
+
+# Install Istio with OpenTelemetry integration
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  namespace: istio-system
+  name: abode-ai-istio
+spec:
+  profile: production
+
+  # Mesh Configuration
+  meshConfig:
+    # Enable access logging
+    accessLogFile: /dev/stdout
+    accessLogEncoding: JSON
+
+    # OpenTelemetry Integration
+    extensionProviders:
+      - name: otel
+        opentelemetry:
+          service: opentelemetry-collector.observability.svc.cluster.local
+          port: 4317
+
+      - name: otel-tracing
+        opentelemetry:
+          service: opentelemetry-collector.observability.svc.cluster.local
+          port: 4317
+          resource_detectors:
+            environment: {}
+
+    # Default tracing configuration
+    defaultConfig:
+      tracing:
+        sampling: 100  # 100% sampling for production monitoring
+        openCensusAgent:
+          address: opentelemetry-collector.observability.svc.cluster.local:55678
+          context:
+            - W3C_TRACE_CONTEXT
+            - GRPC_BIN
+            - CLOUD_TRACE_CONTEXT
+            - B3
+
+    # Enable Prometheus metrics
+    enablePrometheusMerge: true
+
+  # Component Configuration
+  components:
+    # Pilot (control plane)
+    pilot:
+      enabled: true
+      k8s:
+        resources:
+          requests:
+            cpu: 500m
+            memory: 2Gi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+        hpaSpec:
+          minReplicas: 2
+          maxReplicas: 5
+          metrics:
+            - type: Resource
+              resource:
+                name: cpu
+                target:
+                  type: Utilization
+                  averageUtilization: 80
+
+    # Ingress Gateway
+    ingressGateways:
+      - name: istio-ingressgateway
+        enabled: true
+        k8s:
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 2000m
+              memory: 1Gi
+          hpaSpec:
+            minReplicas: 2
+            maxReplicas: 10
+          service:
+            type: LoadBalancer
+            ports:
+              - port: 80
+                targetPort: 8080
+                name: http2
+              - port: 443
+                targetPort: 8443
+                name: https
+              - port: 15021
+                targetPort: 15021
+                name: status-port
+
+    # Egress Gateway
+    egressGateways:
+      - name: istio-egressgateway
+        enabled: true
+        k8s:
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+
+  # Values
+  values:
+    global:
+      # Tracing
+      tracer:
+        zipkin:
+          address: opentelemetry-collector.observability.svc.cluster.local:9411
+
+    # Telemetry v2
+    telemetry:
+      enabled: true
+      v2:
+        enabled: true
+        prometheus:
+          enabled: true
+        stackdriver:
+          enabled: false
+
+---
+
+# OpenTelemetry Collector for Service Mesh
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: observability
+data:
+  otel-collector-config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+      # Zipkin receiver for Istio
+      zipkin:
+        endpoint: 0.0.0.0:9411
+
+      # Jaeger receiver
+      jaeger:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:14250
+          thrift_http:
+            endpoint: 0.0.0.0:14268
+
+      # Prometheus receiver
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: 'istio-mesh'
+              kubernetes_sd_configs:
+                - role: endpoints
+                  namespaces:
+                    names:
+                      - istio-system
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_service_name]
+                  action: keep
+                  regex: istio-telemetry|istio-pilot
+
+            - job_name: 'envoy-stats'
+              metrics_path: /stats/prometheus
+              kubernetes_sd_configs:
+                - role: pod
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_pod_container_port_name]
+                  action: keep
+                  regex: '.*-envoy-prom'
+
+    processors:
+      batch:
+        timeout: 10s
+        send_batch_size: 1024
+
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 2000
+
+      # Add resource attributes
+      resource:
+        attributes:
+          - key: service.name
+            from_attribute: k8s.pod.name
+            action: insert
+          - key: service.namespace
+            from_attribute: k8s.namespace.name
+            action: insert
+          - key: service.instance.id
+            from_attribute: k8s.pod.uid
+            action: insert
+
+      # Span metrics processor
+      spanmetrics:
+        metrics_exporter: prometheus
+        latency_histogram_buckets: [2ms, 8ms, 50ms, 100ms, 200ms, 500ms, 1s, 2s, 5s]
+        dimensions:
+          - name: http.method
+          - name: http.status_code
+
+    exporters:
+      # Jaeger exporter
+      jaeger:
+        endpoint: jaeger-collector.observability.svc.cluster.local:14250
+        tls:
+          insecure: true
+
+      # Prometheus exporter
+      prometheus:
+        endpoint: 0.0.0.0:8889
+        namespace: abode_ai
+        const_labels:
+          environment: production
+
+      # Logging exporter (for debugging)
+      logging:
+        loglevel: info
+
+      # OpenTelemetry exporter (for forwarding)
+      otlp:
+        endpoint: otel-collector-upstream:4317
+        tls:
+          insecure: true
+
+    service:
+      pipelines:
+        # Traces pipeline
+        traces:
+          receivers: [otlp, zipkin, jaeger]
+          processors: [memory_limiter, batch, resource, spanmetrics]
+          exporters: [jaeger, logging]
+
+        # Metrics pipeline
+        metrics:
+          receivers: [otlp, prometheus]
+          processors: [memory_limiter, batch, resource]
+          exporters: [prometheus, logging]
+
+        # Logs pipeline
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, batch, resource]
+          exporters: [logging]
+
+---
+
+# OpenTelemetry Collector Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opentelemetry-collector
+  namespace: observability
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: opentelemetry-collector
+  template:
+    metadata:
+      labels:
+        app: opentelemetry-collector
+    spec:
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.91.0
+          ports:
+            - containerPort: 4317  # OTLP gRPC
+            - containerPort: 4318  # OTLP HTTP
+            - containerPort: 9411  # Zipkin
+            - containerPort: 14250 # Jaeger gRPC
+            - containerPort: 14268 # Jaeger HTTP
+            - containerPort: 8889  # Prometheus metrics
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel
+          args:
+            - --config=/etc/otel/otel-collector-config.yaml
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 2000m
+              memory: 4Gi
+      volumes:
+        - name: config
+          configMap:
+            name: otel-collector-config
+
+---
+
+# OpenTelemetry Collector Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: opentelemetry-collector
+  namespace: observability
+spec:
+  type: ClusterIP
+  selector:
+    app: opentelemetry-collector
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+    - name: zipkin
+      port: 9411
+      targetPort: 9411
+    - name: jaeger-grpc
+      port: 14250
+      targetPort: 14250
+    - name: jaeger-http
+      port: 14268
+      targetPort: 14268
+    - name: prometheus
+      port: 8889
+      targetPort: 8889
+
+---
+
+# Telemetry Configuration for Service Mesh
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: mesh-default
+  namespace: istio-system
+spec:
+  # Enable tracing for all services
+  tracing:
+    - providers:
+        - name: otel-tracing
+      randomSamplingPercentage: 100.0
+      customTags:
+        request_id:
+          header:
+            name: x-request-id
+        user_agent:
+          header:
+            name: user-agent
+
+  # Metrics configuration
+  metrics:
+    - providers:
+        - name: prometheus
+      overrides:
+        - match:
+            metric: ALL_METRICS
+          tagOverrides:
+            request_protocol:
+              operation: UPSERT
+            response_code:
+              operation: UPSERT
+
+---
+
+# SLO/SLA Monitoring Configuration
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: istio-mesh-monitor
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      istio: pilot
+  endpoints:
+    - port: http-monitoring
+      interval: 15s
+      path: /metrics
+
+---
+
+# PrometheusRule for SLO/SLA Alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: abode-ai-slo-alerts
+  namespace: observability
+spec:
+  groups:
+    - name: slo.rules
+      interval: 30s
+      rules:
+        # Availability SLO: 99.9% uptime
+        - alert: AvailabilitySLOViolation
+          expr: |
+            (
+              sum(rate(istio_requests_total{response_code!~"5.*"}[5m]))
+              /
+              sum(rate(istio_requests_total[5m]))
+            ) < 0.999
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Availability SLO violation"
+            description: "Service availability is {{ $value | humanizePercentage }}, below 99.9% SLO"
+
+        # Latency SLO: p95 < 200ms
+        - alert: LatencySLOViolation
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(istio_request_duration_milliseconds_bucket[5m])) by (le)
+            ) > 200
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Latency SLO violation"
+            description: "P95 latency is {{ $value }}ms, exceeding 200ms SLO"
+
+        # Error Rate SLO: < 1%
+        - alert: ErrorRateSLOViolation
+          expr: |
+            (
+              sum(rate(istio_requests_total{response_code=~"5.*"}[5m]))
+              /
+              sum(rate(istio_requests_total[5m]))
+            ) > 0.01
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Error rate SLO violation"
+            description: "Error rate is {{ $value | humanizePercentage }}, exceeding 1% SLO"
