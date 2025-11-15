@@ -703,6 +703,65 @@ export class VectorDatabaseService {
 
     return dotProduct / (magnitudeA * magnitudeB)
   }
+
+  /**
+   * Get index statistics for scale testing and monitoring
+   */
+  async getIndexStats(): Promise<{
+    totalVectors: number
+    indexSizeBytes: number
+    avgVectorSizeBytes: number
+    dimensions: number
+    provider: string
+  }> {
+    await this.ensureInitialized()
+
+    const stats = {
+      totalVectors: 0,
+      indexSizeBytes: 0,
+      avgVectorSizeBytes: 0,
+      dimensions: this.config.dimensions,
+      provider: this.config.provider
+    }
+
+    try {
+      switch (this.config.provider) {
+        case 'pinecone':
+          // Get stats from Pinecone
+          const pineconeStats = await fetch(
+            `https://controller.${this.config.environment}.pinecone.io/databases/${this.config.indexName}`,
+            {
+              headers: {
+                'Api-Key': this.config.apiKey
+              }
+            }
+          ).then((r) => r.json())
+          stats.totalVectors = pineconeStats.database?.vector_count || 0
+          stats.indexSizeBytes = pineconeStats.database?.index_fullness || 0
+          break
+
+        case 'weaviate':
+          // Get stats from Weaviate
+          const weaviateUrl = process.env.WEAVIATE_URL || 'http://localhost:8080'
+          const weaviateStats = await fetch(`${weaviateUrl}/v1/schema/${this.config.indexName}`).then((r) =>
+            r.json()
+          )
+          stats.totalVectors = weaviateStats.vectorIndexConfig?.totalVectors || 0
+          break
+
+        case 'faiss':
+          // FAISS is in-memory, get from store
+          stats.totalVectors = this.vectors.length
+          stats.indexSizeBytes = this.vectors.length * this.config.dimensions * 4 // 4 bytes per float
+          stats.avgVectorSizeBytes = this.config.dimensions * 4
+          break
+      }
+    } catch (error) {
+      console.error('Error getting index stats:', error)
+    }
+
+    return stats
+  }
 }
 
 // Export singleton with production configuration
