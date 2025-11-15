@@ -1,0 +1,28 @@
+# Elasticsearch Configuration for Abode AI
+
+cluster.name: "abode-cluster"
+network.host: 0.0.0.0
+
+# Security
+xpack.security.enabled: false
+xpack.security.enrollment.enabled: false
+
+# Discovery
+discovery.type: single-node
+
+# Index settings
+action.auto_create_index: true
+action.destructive_requires_name: false
+
+# Memory
+bootstrap.memory_lock: true
+
+# Monitoring
+xpack.monitoring.collection.enabled: true
+
+# Indexing
+indices.query.bool.max_clause_count: 10000
+
+# Performance
+thread_pool.write.queue_size: 1000
+thread_pool.search.queue_size: 1000
