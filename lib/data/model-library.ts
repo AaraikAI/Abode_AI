@@ -197,10 +197,75 @@ export async function getCategories(): Promise<{ category: string; count: number
 }
 
 /**
+ * Update model metadata
+ */
+export async function updateModel(id: string, updates: Partial<Model3D>): Promise<Model3D | null> {
+  const { data, error } = await supabase
+    .from('model_library')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single()
+
+  if (error) {
+    console.error('Update model error:', error)
+    throw new Error('Failed to update model')
+  }
+
+  return data as Model3D
+}
+
+/**
+ * Delete a model
+ */
+export async function deleteModel(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('model_library')
+    .delete()
+    .eq('id', id)
+
+  if (error) {
+    console.error('Delete model error:', error)
+    throw new Error('Failed to delete model')
+  }
+}
+
+/**
+ * Create a new model
+ */
+export async function createModel(model: Omit<Model3D, 'id' | 'created_at' | 'updated_at'>): Promise<Model3D> {
+  const { data, error } = await supabase
+    .from('model_library')
+    .insert({
+      ...model,
+      downloads: 0,
+      rating: 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .select()
+    .single()
+
+  if (error) {
+    console.error('Create model error:', error)
+    throw new Error('Failed to create model')
+  }
+
+  return data as Model3D
+}
+
+/**
  * Increment download count
  */
 export async function incrementDownloads(id: string): Promise<void> {
-  await supabase.rpc('increment_model_downloads', { model_id: id })
+  const { error } = await supabase
+    .from('model_library')
+    .update({ downloads: supabase.rpc('increment', { value: 1 }) })
+    .eq('id', id)
+
+  if (error) {
+    console.error('Increment downloads error:', error)
+  }
 }
 
 /**
