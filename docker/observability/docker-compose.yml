@@ -1,0 +1,97 @@
+version: '3.8'
+
+services:
+  # Jaeger - Distributed Tracing Backend
+  jaeger:
+    image: jaegertracing/all-in-one:1.51
+    container_name: abode-jaeger
+    environment:
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "5775:5775/udp"    # Accept zipkin.thrift over compact thrift protocol
+      - "6831:6831/udp"    # Accept jaeger.thrift over compact thrift protocol
+      - "6832:6832/udp"    # Accept jaeger.thrift over binary thrift protocol
+      - "5778:5778"        # Serve configs
+      - "16686:16686"      # Web UI
+      - "14250:14250"      # Accept model.proto
+      - "14268:14268"      # Accept jaeger.thrift directly from clients
+      - "14269:14269"      # Admin port: health check at / and metrics at /metrics
+      - "4317:4317"        # OTLP gRPC receiver
+      - "4318:4318"        # OTLP HTTP receiver
+      - "9411:9411"        # Zipkin compatible endpoint
+    networks:
+      - observability
+    volumes:
+      - jaeger-data:/tmp
+    restart: unless-stopped
+
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    container_name: abode-otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "1888:1888"   # pprof extension
+      - "8888:8888"   # Prometheus metrics exposed by the collector
+      - "8889:8889"   # Prometheus exporter metrics
+      - "13133:13133" # health_check extension
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "55679:55679" # zpages extension
+    depends_on:
+      - jaeger
+    networks:
+      - observability
+    restart: unless-stopped
+
+  # Prometheus - Metrics Storage
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: abode-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - observability
+    restart: unless-stopped
+
+  # Grafana - Metrics & Traces Visualization
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: abode-grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+      - jaeger
+    networks:
+      - observability
+    restart: unless-stopped
+
+networks:
+  observability:
+    driver: bridge
+
+volumes:
+  jaeger-data:
+  prometheus-data:
+  grafana-data:
