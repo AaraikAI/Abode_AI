@@ -1,0 +1,85 @@
+version: '3.8'
+
+services:
+  # OpenFOAM CFD Solver
+  openfoam:
+    build:
+      context: ./openfoam
+      dockerfile: Dockerfile
+    container_name: abode-openfoam
+    volumes:
+      - ./cases:/cases
+      - ./meshes:/meshes
+      - ./results:/results
+    environment:
+      - FOAM_INST_DIR=/opt/openfoam10
+      - WM_PROJECT_USER_DIR=/cases
+      - PARALLEL_CORES=4
+    ports:
+      - "8000:8000"  # API server
+    networks:
+      - cfd-network
+    command: python3 /app/cfd-server.py
+    restart: unless-stopped
+
+  # ParaView for visualization
+  paraview:
+    image: kitware/paraview:latest
+    container_name: abode-paraview
+    ports:
+      - "11111:11111"
+    volumes:
+      - ./results:/results:ro
+    environment:
+      - DISPLAY=:0
+      - PARAVIEW_DATA_ROOT=/results
+    networks:
+      - cfd-network
+    restart: unless-stopped
+
+  # Mesh generation service (snappyHexMesh)
+  mesh-generator:
+    build:
+      context: ./openfoam
+      dockerfile: Dockerfile
+    container_name: abode-mesh-generator
+    volumes:
+      - ./geometries:/geometries
+      - ./meshes:/meshes
+    environment:
+      - FOAM_INST_DIR=/opt/openfoam10
+    networks:
+      - cfd-network
+    command: python3 /app/mesh-server.py
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
+
+  # Results processor
+  post-processor:
+    build:
+      context: ./openfoam
+      dockerfile: Dockerfile
+    container_name: abode-post-processor
+    volumes:
+      - ./results:/results
+      - ./visualizations:/visualizations
+    environment:
+      - FOAM_INST_DIR=/opt/openfoam10
+    networks:
+      - cfd-network
+    command: python3 /app/post-processor.py
+    ports:
+      - "8002:8002"
+    restart: unless-stopped
+
+networks:
+  cfd-network:
+    driver: bridge
+
+volumes:
+  cases:
+  meshes:
+  results:
+  geometries:
+  visualizations:
