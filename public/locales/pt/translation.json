@@ -1,0 +1,38 @@
+{
+  "common": {
+    "app_name": "Abode AI",
+    "welcome": "Bem-vindo",
+    "logout": "Sair",
+    "login": "Entrar",
+    "signup": "Cadastrar",
+    "save": "Salvar",
+    "cancel": "Cancelar",
+    "delete": "Excluir",
+    "edit": "Editar",
+    "create": "Criar",
+    "upload": "Carregar",
+    "download": "Baixar",
+    "search": "Pesquisar",
+    "filter": "Filtrar",
+    "sort": "Ordenar",
+    "loading": "Carregando...",
+    "error": "Erro",
+    "success": "Sucesso",
+    "confirm": "Confirmar",
+    "back": "Voltar",
+    "next": "Próximo",
+    "finish": "Concluir",
+    "settings": "Configurações",
+    "help": "Ajuda",
+    "notifications": "Notificações"
+  },
+  "navigation": {
+    "dashboard": "Painel",
+    "projects": "Projetos",
+    "models": "Biblioteca de Modelos",
+    "rendering": "Renderização",
+    "collaboration": "Colaboração",
+    "marketplace": "Mercado",
+    "analytics": "Análises"
+  }
+}

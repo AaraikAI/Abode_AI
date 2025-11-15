@@ -1,0 +1,105 @@
+# Percy Visual Testing Configuration
+# https://docs.percy.io/docs/configuration
+
+version: 2
+
+# Static discovery configuration
+static:
+  # Specify static build directory
+  base-url: 'http://localhost:3000'
+
+  # Snapshot configuration
+  snapshots:
+    # Enable JavaScript
+    enable-javascript: true
+
+    # Widths to capture
+    widths:
+      - 375   # Mobile
+      - 768   # Tablet
+      - 1280  # Desktop
+      - 1920  # Large desktop
+
+    # Minimum height
+    min-height: 1024
+
+    # Percy CSS for visual testing
+    percy-css: |
+      /* Hide elements that change frequently */
+      [data-testid="timestamp"],
+      [data-testid="random-id"],
+      .percy-hide {
+        visibility: hidden !important;
+      }
+
+      /* Disable animations for consistent snapshots */
+      *, *::before, *::after {
+        animation-duration: 0s !important;
+        animation-delay: 0s !important;
+        transition-duration: 0s !important;
+        transition-delay: 0s !important;
+      }
+
+# Discovery configuration for automated snapshots
+discovery:
+  # Network idle timeout
+  network-idle-timeout: 750
+
+  # Allowed hostnames
+  allowed-hostnames:
+    - localhost
+    - 127.0.0.1
+
+  # Disable cache
+  disable-cache: true
+
+# Agent configuration
+agent:
+  # Asset discovery
+  asset-discovery:
+    # Network idle timeout for assets
+    network-idle-timeout: 250
+
+    # Allowed hostnames for assets
+    allowed-hostnames:
+      - localhost
+      - cdn.jsdelivr.net
+      - fonts.googleapis.com
+      - fonts.gstatic.com
+
+# Snapshot configuration
+snapshot:
+  # Widths for responsive testing
+  widths:
+    - 375
+    - 768
+    - 1280
+    - 1920
+
+  # Minimum height
+  min-height: 1024
+
+  # Enable JavaScript
+  enable-javascript: true
+
+  # Wait for selectors
+  wait-for-selector: '[data-percy-ready="true"]'
+
+  # Wait for timeout
+  wait-for-timeout: 5000
+
+# Comparison configuration
+comparison:
+  # Threshold for visual changes (0-1)
+  threshold: 0.01
+
+  # Include differences in the UI
+  include-same-diff: false
+
+# CI configuration
+ci:
+  # Post a comment on pull requests
+  pull-request-comment: true
+
+  # Build status
+  build-status: true

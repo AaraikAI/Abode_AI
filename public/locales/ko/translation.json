@@ -1,0 +1,38 @@
+{
+  "common": {
+    "app_name": "Abode AI",
+    "welcome": "환영합니다",
+    "logout": "로그아웃",
+    "login": "로그인",
+    "signup": "회원가입",
+    "save": "저장",
+    "cancel": "취소",
+    "delete": "삭제",
+    "edit": "편집",
+    "create": "만들기",
+    "upload": "업로드",
+    "download": "다운로드",
+    "search": "검색",
+    "filter": "필터",
+    "sort": "정렬",
+    "loading": "로딩 중...",
+    "error": "오류",
+    "success": "성공",
+    "confirm": "확인",
+    "back": "뒤로",
+    "next": "다음",
+    "finish": "완료",
+    "settings": "설정",
+    "help": "도움말",
+    "notifications": "알림"
+  },
+  "navigation": {
+    "dashboard": "대시보드",
+    "projects": "프로젝트",
+    "models": "모델 라이브러리",
+    "rendering": "렌더링",
+    "collaboration": "협업",
+    "marketplace": "마켓플레이스",
+    "analytics": "분석"
+  }
+}

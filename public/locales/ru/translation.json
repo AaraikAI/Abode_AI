@@ -1,0 +1,38 @@
+{
+  "common": {
+    "app_name": "Abode AI",
+    "welcome": "Добро пожаловать",
+    "logout": "Выйти",
+    "login": "Войти",
+    "signup": "Регистрация",
+    "save": "Сохранить",
+    "cancel": "Отмена",
+    "delete": "Удалить",
+    "edit": "Редактировать",
+    "create": "Создать",
+    "upload": "Загрузить",
+    "download": "Скачать",
+    "search": "Поиск",
+    "filter": "Фильтр",
+    "sort": "Сортировать",
+    "loading": "Загрузка...",
+    "error": "Ошибка",
+    "success": "Успех",
+    "confirm": "Подтвердить",
+    "back": "Назад",
+    "next": "Далее",
+    "finish": "Завершить",
+    "settings": "Настройки",
+    "help": "Помощь",
+    "notifications": "Уведомления"
+  },
+  "navigation": {
+    "dashboard": "Панель управления",
+    "projects": "Проекты",
+    "models": "Библиотека моделей",
+    "rendering": "Рендеринг",
+    "collaboration": "Совместная работа",
+    "marketplace": "Маркетплейс",
+    "analytics": "Аналитика"
+  }
+}
