@@ -1,0 +1,73 @@
+# Discourse Forum Integration
+# Complete forum deployment with SSO and badge system
+
+version: '3.8'
+
+services:
+  discourse:
+    image: discourse/discourse:latest
+    container_name: abode-discourse
+    ports:
+      - "4000:3000"
+    environment:
+      DISCOURSE_HOSTNAME: forum.abode-ai.com
+      DISCOURSE_DEVELOPER_EMAILS: admin@abode-ai.com
+      DISCOURSE_SMTP_ADDRESS: smtp.sendgrid.net
+      DISCOURSE_SMTP_PORT: 587
+      DISCOURSE_SMTP_USER_NAME: ${SMTP_USERNAME}
+      DISCOURSE_SMTP_PASSWORD: ${SMTP_PASSWORD}
+
+      # SSO Configuration
+      DISCOURSE_ENABLE_SSO: true
+      DISCOURSE_SSO_URL: https://abode-ai.com/sso/discourse
+      DISCOURSE_SSO_SECRET: ${DISCOURSE_SSO_SECRET}
+
+      # Database
+      DISCOURSE_DB_HOST: discourse-db
+      DISCOURSE_DB_NAME: discourse
+      DISCOURSE_DB_USERNAME: discourse
+      DISCOURSE_DB_PASSWORD: ${DISCOURSE_DB_PASSWORD}
+
+      # Redis
+      DISCOURSE_REDIS_HOST: discourse-redis
+    volumes:
+      - discourse-data:/var/www/discourse/public/uploads
+      - discourse-backups:/var/www/discourse/public/backups
+    depends_on:
+      - discourse-db
+      - discourse-redis
+    networks:
+      - discourse-network
+    restart: unless-stopped
+
+  discourse-db:
+    image: postgres:14-alpine
+    container_name: discourse-db
+    environment:
+      POSTGRES_DB: discourse
+      POSTGRES_USER: discourse
+      POSTGRES_PASSWORD: ${DISCOURSE_DB_PASSWORD}
+    volumes:
+      - discourse-db-data:/var/lib/postgresql/data
+    networks:
+      - discourse-network
+    restart: unless-stopped
+
+  discourse-redis:
+    image: redis:7-alpine
+    container_name: discourse-redis
+    volumes:
+      - discourse-redis-data:/data
+    networks:
+      - discourse-network
+    restart: unless-stopped
+
+volumes:
+  discourse-data:
+  discourse-backups:
+  discourse-db-data:
+  discourse-redis-data:
+
+networks:
+  discourse-network:
+    driver: bridge

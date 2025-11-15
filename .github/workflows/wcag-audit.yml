@@ -1,0 +1,101 @@
+name: WCAG AA Compliance Audit
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main]
+  schedule:
+    # Run weekly on Sundays at 2 AM
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      level:
+        description: 'WCAG Level (A, AA, AAA)'
+        required: false
+        default: 'AA'
+
+jobs:
+  wcag-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+      - name: Start application
+        run: |
+          npm run start &
+          npx wait-on http://localhost:3000 --timeout 60000
+
+      - name: Run WCAG Audit
+        run: npx tsx tests/accessibility/wcag-audit.spec.ts
+        env:
+          WCAG_LEVEL: ${{ github.event.inputs.level || 'AA' }}
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: wcag-audit-report
+          path: reports/wcag-audit-*.html
+          retention-days: 30
+
+      - name: Comment on PR with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const reportPath = 'reports/wcag-audit-summary.json';
+
+            if (fs.existsSync(reportPath)) {
+              const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+
+              const comment = `## WCAG ${report.level} Compliance Audit
+
+              **Status:** ${report.overallCompliance ? '✅ PASSED' : '❌ FAILED'}
+              **Score:** ${report.complianceScore}%
+
+              ### Summary
+              - Total Violations: ${report.totalViolations}
+              - Critical Issues: ${report.criticalIssues.length}
+              - Pages Audited: ${report.pages.length}
+
+              ${report.actionItems.length > 0 ? `### Action Items\n${report.actionItems.map(item => `- ${item}`).join('\n')}` : ''}
+
+              [View Full Report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+              `;
+
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            }
+
+      - name: Fail if critical issues found
+        run: |
+          if [ -f reports/wcag-audit-summary.json ]; then
+            CRITICAL=$(jq '.criticalIssues | length' reports/wcag-audit-summary.json)
+            if [ "$CRITICAL" -gt "0" ]; then
+              echo "❌ Found $CRITICAL critical accessibility issues"
+              exit 1
+            fi
+          fi

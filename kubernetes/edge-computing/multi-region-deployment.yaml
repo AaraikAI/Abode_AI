@@ -1,0 +1,61 @@
+# Multi-Region Edge Computing Deployment
+# Cloudflare Workers configuration for global edge deployment
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edge-config
+  namespace: edge-computing
+data:
+  regions.json: |
+    {
+      "regions": [
+        {"id": "us-east", "endpoint": "https://us-east.workers.dev", "priority": 1},
+        {"id": "us-west", "endpoint": "https://us-west.workers.dev", "priority": 1},
+        {"id": "eu-west", "endpoint": "https://eu-west.workers.dev", "priority": 1},
+        {"id": "ap-southeast", "endpoint": "https://ap-southeast.workers.dev", "priority": 1}
+      ],
+      "failover": {
+        "enabled": true,
+        "timeout": 5000,
+        "retries": 3
+      },
+      "analytics": {
+        "enabled": true,
+        "endpoint": "https://analytics.cloudflare.com/api"
+      }
+    }
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-controller
+  namespace: edge-computing
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: edge-controller
+  template:
+    metadata:
+      labels:
+        app: edge-controller
+    spec:
+      containers:
+        - name: controller
+          image: abode-ai/edge-controller:latest
+          env:
+            - name: CLOUDFLARE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflare-credentials
+                  key: api-key
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
